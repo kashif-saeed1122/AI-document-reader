@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Q&A - Large File Support</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-section, .chat-section {
+            margin-bottom: 30px;
+        }
+        input[type="file"] {
+            margin-bottom: 10px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        #chatSection {
+            display: none;
+        }
+        #chatMessages {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .user-message {
+            background-color: #e3f2fd;
+            margin-left: 50px;
+        }
+        .assistant-message {
+            background-color: #f5f5f5;
+            margin-right: 50px;
+        }
+        #questionInput {
+            width: calc(100% - 100px);
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        #askButton {
+            width: 80px;
+            margin-left: 10px;
+        }
+        .file-info {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Document Q&A - Large File Support</h1>
+        <p style="text-align: center; color: #666;">Supports files up to 300k tokens (using gpt-4.1-nano)</p>
+        
+        <div class="upload-section">
+            <h2>Upload Document</h2>
+            <input type="file" id="fileInput" accept=".pdf,.docx,.txt">
+            <button id="uploadButton">Upload</button>
+            <div id="status"></div>
+            <div id="fileInfo" class="file-info"></div>
+        </div>
+        
+        <div id="chatSection" class="chat-section">
+            <h2>Ask Questions</h2>
+            <div id="chatMessages"></div>
+            <div>
+                <input type="text" id="questionInput" placeholder="Ask a question about your document...">
+                <button id="askButton">Ask</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        
+        document.getElementById('uploadButton').addEventListener('click', async () => {
+            const fileInput = document.getElementById('fileInput');
+            const file = fileInput.files[0];
+            const statusDiv = document.getElementById('status');
+            const fileInfoDiv = document.getElementById('fileInfo');
+            const uploadButton = document.getElementById('uploadButton');
+            
+            if (!file) {
+                statusDiv.textContent = 'Please select a file';
+                statusDiv.className = 'error';
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            uploadButton.disabled = true;
+            statusDiv.textContent = 'Uploading and processing large file...';
+            statusDiv.className = '';
+            fileInfoDiv.textContent = `File size: ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    sessionId = data.session_id;
+                    statusDiv.textContent = 'Document uploaded successfully! You can now ask questions.';
+                    statusDiv.className = 'success';
+                    fileInfoDiv.textContent = `File size: ${(data.file_size / 1024 / 1024).toFixed(2)} MB | Text extracted: ${(data.text_size / 1024).toFixed(2)} KB`;
+                    document.getElementById('chatSection').style.display = 'block';
+                } else {
+                    statusDiv.textContent = `Error: ${data.error}`;
+                    statusDiv.className = 'error';
+                }
+            } catch (error) {
+                statusDiv.textContent = 'Error uploading file';
+                statusDiv.className = 'error';
+            } finally {
+                uploadButton.disabled = false;
+            }
+        });
+        
+        document.getElementById('askButton').addEventListener('click', askQuestion);
+        document.getElementById('questionInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                askQuestion();
+            }
+        });
+        
+        async function askQuestion() {
+            const questionInput = document.getElementById('questionInput');
+            const question = questionInput.value.trim();
+            const askButton = document.getElementById('askButton');
+            
+            if (!question || !sessionId) return;
+            
+            // Add user message to chat
+            addMessage(question, 'user');
+            questionInput.value = '';
+            askButton.disabled = true;
+            
+            try {
+                const response = await fetch('/ask', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        question: question
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addMessage(data.answer, 'assistant');
+                } else {
+                    addMessage(`Error: ${data.error}`, 'assistant');
+                }
+            } catch (error) {
+                addMessage('Error getting answer', 'assistant');
+            } finally {
+                askButton.disabled = false;
+            }
+        }
+        
+        function addMessage(content, role) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}-message`;
+            messageDiv.textContent = content;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    </script>
+</body>
+</html>
